@@ -35,6 +35,8 @@ const HUMOR = [
   "Staging final pep talk before execution... 🎬",
 ];
 
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3001";
+
 export default function LaunchPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -65,11 +67,12 @@ export default function LaunchPage() {
     }
 
     // Connect to Socket.io
-    const socket = io(undefined, {
+    const socket = io(WS_URL, {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: 5,
+      transports: ["websocket"],
     });
 
     socketRef.current = socket;
@@ -80,7 +83,7 @@ export default function LaunchPage() {
         message: "✓ Connected to swarm network",
         emoji: "🌐",
       });
-      socket.emit("join", { sessionId });
+      socket.emit("join_session", sessionId);
     });
 
     socket.on("disconnect", () => {
@@ -111,11 +114,7 @@ export default function LaunchPage() {
 
     socket.on(
       "AGENT_SPAWNED",
-      (payload: {
-        agentId: string;
-        role: string;
-        budgetUsdc: number;
-      }) => {
+      (payload: { agentId: string; role: string; budgetUsdc: number }) => {
         setAgentCount((c) => c + 1);
         const roleEmoji: Record<string, string> = {
           "portfolio-scout": "🔍",
@@ -134,7 +133,7 @@ export default function LaunchPage() {
           details: `Budget: $${payload.budgetUsdc.toFixed(2)} USDC`,
           emoji: roleEmoji[payload.role] || "🤖",
         });
-      }
+      },
     );
 
     socket.on(
@@ -147,7 +146,7 @@ export default function LaunchPage() {
           details: payload.description,
           emoji: "💸",
         });
-      }
+      },
     );
 
     socket.on("TOOL_CALLED", (payload: { toolName: string }) => {
@@ -160,11 +159,7 @@ export default function LaunchPage() {
 
     socket.on(
       "AGENT_COMPLETE",
-      (payload: {
-        spentUsdc: number;
-        durationMs: number;
-        output?: string;
-      }) => {
+      (payload: { spentUsdc: number; durationMs: number; output?: string }) => {
         const duration = (payload.durationMs / 1000).toFixed(1);
         addLog({
           type: "success",
@@ -172,10 +167,8 @@ export default function LaunchPage() {
           details: `Spent: $${payload.spentUsdc.toFixed(2)} USDC`,
           emoji: "✓",
         });
-        addHumorLog(
-          HUMOR[Math.floor(Math.random() * HUMOR.length)]
-        );
-      }
+        addHumorLog(HUMOR[Math.floor(Math.random() * HUMOR.length)]);
+      },
     );
 
     socket.on("SESSION_COMPLETE", () => {
@@ -215,7 +208,7 @@ export default function LaunchPage() {
           details: payload.summary?.slice(0, 100),
           emoji: "⏸️",
         });
-      }
+      },
     );
 
     return () => {
@@ -275,9 +268,7 @@ export default function LaunchPage() {
                 SWARM LAUNCHING
               </span>
             </div>
-            <span className="text-xs text-muted">
-              {agentCount} agents
-            </span>
+            <span className="text-xs text-muted">{agentCount} agents</span>
             <span className="text-xs text-muted">
               ${totalSpent.toFixed(4)} spent
             </span>
