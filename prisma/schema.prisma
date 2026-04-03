@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Session {
+  id                   String    @id @default(uuid())
+  task                 String
+  status               String    @default("pending_funding")
+  // pending_funding | running | awaiting_approval | complete | failed | cancelled
+  masterAgentId        String?
+  fundingMode          String    @default("pay_per_session")
+  userWalletAddress    String?
+  sessionWalletName    String?
+  sessionWalletAddress String?
+  sessionWalletKey     String?
+  budgetUsdc           Float
+  spentUsdc            Float     @default(0)
+  finalOutput          String?
+  agentCount           Int       @default(0)
+  durationMs           Int?
+  isSeeded             Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  walletMaster WalletMaster? @relation(fields: [userWalletAddress], references: [userWalletAddress])
+  agents   Agent[]
+  payments Payment[]
+}
+
+model WalletMaster {
+  userWalletAddress String   @id
+  masterAgentId     String   @unique
+  masterWalletName  String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  sessions Session[]
+}
+
+model Agent {
+  id            String    @id @default(uuid())
+  sessionId     String
+  parentAgentId String?
+  depth         Int       @default(0)
+  role          String
+  task          String
+  status        String    @default("running")
+  // running | awaiting_approval | complete | failed
+  walletAddress String?
+  budgetUsdc    Float
+  spentUsdc     Float     @default(0)
+  output        String?
+  toolCallCount Int       @default(0)
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+
+  session   Session    @relation(fields: [sessionId], references: [id])
+  parent    Agent?     @relation("AgentTree", fields: [parentAgentId], references: [id])
+  children  Agent[]    @relation("AgentTree")
+  toolCalls ToolCall[]
+  payments  Payment[]
+}
+
+model ToolCall {
+  id        String   @id @default(uuid())
+  agentId   String
+  sessionId String
+  toolName  String
+  input     Json
+  output    Json?
+  status    String   @default("pending")
+  // pending | running | done | failed
+  durationMs Int?
+  createdAt  DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id])
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  sessionId   String
+  agentId     String?
+  type        String   @default("agent_invoke")
+  // session_funding | treasury_prefund | agent_invoke
+  payerWalletAddress    String?
+  receiverWalletAddress String?
+  amountUsdc  Float
+  txHash      String?
+  status      String   @default("pending")
+  // pending | confirmed | failed
+  description String?
+  createdAt   DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id])
+  agent   Agent?  @relation(fields: [agentId], references: [id])
+}
