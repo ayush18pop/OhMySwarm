@@ -14,6 +14,7 @@ interface ActivityEvent {
     | "payment"
     | "tool"
     | "approval"
+    | "humor"
     | "session";
   agentId?: string;
   label: string;
@@ -47,8 +48,34 @@ const TYPE_STYLE: Record<
   payment: { color: "#ffe600", icon: "⬡" },
   tool: { color: "#4a8fa8", icon: "◎" },
   approval: { color: "#ffe600", icon: "⚑" },
+  humor: { color: "#ff7eb6", icon: "✦" },
   session: { color: "#00f5ff", icon: "◈" },
 };
+
+const HUMOR_TRAIL = [
+  "Waking up the swarm from its espresso break...",
+  "Charging the bees with optimism...",
+  "Convincing market gods this is a good idea...",
+  "Calibrating agent enthusiasm levels...",
+  "Reminding agents that money = data = power...",
+  "Sprinkling pixie dust on gas prices...",
+  "Teaching swarm members to count to 2.0...",
+  "Lubricating blockchain gears...",
+  "Inflating agent confidence balloons...",
+  "Whispering sweet APY numbers...",
+  "Preparing agents for harsh market realities...",
+  "Staging final pep talk before execution...",
+];
+
+function humorFor(seed: string) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const idx = Math.abs(hash) % HUMOR_TRAIL.length;
+  return HUMOR_TRAIL[idx];
+}
 
 export function ActivityFeed({ agents, payments, status }: ActivityFeedProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -65,6 +92,13 @@ export function ActivityFeed({ agents, payments, status }: ActivityFeedProps) {
       label: `${a.role.toUpperCase()} spawned`,
       detail: a.task.slice(0, 48) + (a.task.length > 48 ? "…" : ""),
     });
+    events.push({
+      id: `humor-spawn-${a.id}`,
+      ts: new Date(a.createdAt).getTime() + 1,
+      type: "humor",
+      agentId: a.id,
+      label: humorFor(`spawn-${a.id}`),
+    });
     if (a.status === "complete" && a.completedAt) {
       const dur = a.completedAt
         ? Math.round(
@@ -80,6 +114,13 @@ export function ActivityFeed({ agents, payments, status }: ActivityFeedProps) {
         agentId: a.id,
         label: `${a.role.toUpperCase()} complete`,
         detail: dur ? `${dur}s · ${a.toolCallCount} tool calls` : undefined,
+      });
+      events.push({
+        id: `humor-done-${a.id}`,
+        ts: new Date(a.completedAt).getTime() + 1,
+        type: "humor",
+        agentId: a.id,
+        label: humorFor(`done-${a.id}`),
       });
     }
     if (a.status === "failed") {
@@ -103,6 +144,13 @@ export function ActivityFeed({ agents, payments, status }: ActivityFeedProps) {
       detail: p.description ?? undefined,
       amount: p.amountUsdc,
       txHash: p.txHash,
+    });
+    events.push({
+      id: `humor-pay-${p.id}`,
+      ts: new Date(p.createdAt).getTime() + 1,
+      type: "humor",
+      agentId: p.agentId,
+      label: humorFor(`pay-${p.id}`),
     });
   });
 
