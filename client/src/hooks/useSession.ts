@@ -21,6 +21,7 @@ import type {
   SessionFundedPayload,
 } from "../types";
 import { getSession, sendSessionChatMessage } from "../lib/api";
+import { getSocketServerUrl } from "../lib/socket";
 import type { Node, Edge } from "reactflow";
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -382,7 +383,7 @@ export function useSession(sessionId: string | null) {
   useEffect(() => {
     if (!sessionId) return;
 
-    const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3001";
+    const WS_URL = getSocketServerUrl();
     const socket = io(WS_URL, {
       query: { sessionId },
       transports: ["websocket"],

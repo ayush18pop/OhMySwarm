@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
+import { getSocketServerUrl } from "../../lib/socket";
 
 interface LogEntry {
   id: string;
@@ -35,7 +36,7 @@ const HUMOR = [
   "Staging final pep talk before execution... 🎬",
 ];
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3001";
+const WS_URL = getSocketServerUrl();
 
 export default function LaunchPage() {
   const router = useRouter();
@@ -50,6 +51,21 @@ export default function LaunchPage() {
   const [totalSpent, setTotalSpent] = useState(0);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const redirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasRedirectScheduledRef = useRef(false);
+
+  function scheduleRedirect(delayMs = 1200) {
+    if (!sessionId || hasRedirectScheduledRef.current) return;
+    hasRedirectScheduledRef.current = true;
+    if (fallbackTimeoutRef.current) {
+      clearTimeout(fallbackTimeoutRef.current);
+      fallbackTimeoutRef.current = null;
+    }
+    redirectTimeoutRef.current = setTimeout(() => {
+      router.push(`/session/${sessionId}`);
+    }, delayMs);
+  }
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -84,6 +100,11 @@ export default function LaunchPage() {
         emoji: "🌐",
       });
       socket.emit("join_session", sessionId);
+
+      // Launch screen is only a brief handoff: never keep users here too long.
+      fallbackTimeoutRef.current = setTimeout(() => {
+        scheduleRedirect(0);
+      }, 6000);
     });
 
     socket.on("disconnect", () => {
@@ -115,6 +136,7 @@ export default function LaunchPage() {
     socket.on(
       "AGENT_SPAWNED",
       (payload: { agentId: string; role: string; budgetUsdc: number }) => {
+        setStatus("running");
         setAgentCount((c) => c + 1);
         const roleEmoji: Record<string, string> = {
           "portfolio-scout": "🔍",
@@ -133,6 +155,7 @@ export default function LaunchPage() {
           details: `Budget: $${payload.budgetUsdc.toFixed(2)} USDC`,
           emoji: roleEmoji[payload.role] || "🤖",
         });
+        scheduleRedirect();
       },
     );
 
@@ -150,11 +173,13 @@ export default function LaunchPage() {
     );
 
     socket.on("TOOL_CALLED", (payload: { toolName: string }) => {
+      setStatus("running");
       addLog({
         type: "info",
         message: `Tool invoked: ${payload.toolName}`,
         emoji: "🔧",
       });
+      scheduleRedirect();
     });
 
     socket.on(
@@ -178,9 +203,7 @@ export default function LaunchPage() {
         message: "🎉 Swarm execution complete!",
       });
       addHumorLog("Swarm is now taking a victory lap.");
-      setTimeout(() => {
-        router.push(`/session/${sessionId}`);
-      }, 2000);
+      scheduleRedirect(300);
     });
 
     socket.on("SESSION_FAILED", (payload: { error: string }) => {
@@ -212,6 +235,12 @@ export default function LaunchPage() {
     );
 
     return () => {
+      if (redirectTimeoutRef.current) {
+        clearTimeout(redirectTimeoutRef.current);
+      }
+      if (fallbackTimeoutRef.current) {
+        clearTimeout(fallbackTimeoutRef.current);
+      }
       socket.disconnect();
     };
   }, [sessionId, router]);
