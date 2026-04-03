@@ -13,14 +13,33 @@ import subagentsRouter   from './routes/subagents'
 import walletRouter      from './routes/wallet'
 
 const PORT         = parseInt(process.env.PORT ?? '3001')
-const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000'
+const FRONTEND_ORIGINS = (
+  process.env.FRONTEND_URLS
+    ?? process.env.FRONTEND_URL
+    ?? 'http://localhost:3000'
+)
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean)
+
+function isAllowedOrigin(origin?: string): boolean {
+  // Non-browser tools (curl/postman/server-to-server) may not send Origin.
+  if (!origin) return true
+  return FRONTEND_ORIGINS.includes(origin)
+}
 
 // ── Express ───────────────────────────────────────────────────────────────────
 
 const app    = express()
 const server = http.createServer(app)
 
-app.use(cors({ origin: FRONTEND_URL, credentials: true }))
+app.use(cors({
+  origin: (origin, cb) => {
+    if (isAllowedOrigin(origin)) return cb(null, true)
+    return cb(new Error(`CORS origin not allowed: ${origin}`))
+  },
+  credentials: true,
+}))
 app.use(express.json())
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -34,7 +53,10 @@ app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
 // ── Socket.io ─────────────────────────────────────────────────────────────────
 
 const io = new Server(server, {
-  cors: { origin: FRONTEND_URL, credentials: true },
+  cors: {
+    origin: FRONTEND_ORIGINS,
+    credentials: true,
+  },
 })
 
 initEmitter(io)
