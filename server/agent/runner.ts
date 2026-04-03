@@ -16,7 +16,7 @@ import {
   emitSessionFailed,
   emitAwaitingApproval,
 } from "../emit";
-import { v4 as uuidv4 } from 'uuid'
+import { v4 as uuidv4 } from "uuid";
 
 export interface StartSessionOptions {
   sessionId: string;
@@ -30,38 +30,40 @@ export async function startSession(opts: StartSessionOptions): Promise<void> {
   let sessionWalletAddress: string | null = null;
 
   // Ensure the session has a real master Agent row before any sub-agents spawn.
-  const session = await prisma.session.findUnique({ where: { id: sessionId } })
+  const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) {
-    throw new Error(`Session ${sessionId} not found`)
+    throw new Error(`Session ${sessionId} not found`);
   }
 
-  let masterAgentId = session.masterAgentId
+  let masterAgentId = session.masterAgentId;
   if (masterAgentId) {
-    const existingMaster = await prisma.agent.findUnique({ where: { id: masterAgentId } })
+    const existingMaster = await prisma.agent.findUnique({
+      where: { id: masterAgentId },
+    });
     if (!existingMaster) {
-      masterAgentId = null
+      masterAgentId = null;
     }
   }
 
   if (!masterAgentId) {
-    masterAgentId = uuidv4()
+    masterAgentId = uuidv4();
     await prisma.agent.create({
       data: {
         id: masterAgentId,
         sessionId,
         parentAgentId: null,
         depth: 0,
-        role: 'master',
+        role: "master",
         task,
-        status: 'running',
+        status: "running",
         budgetUsdc,
       },
-    })
+    });
 
     await prisma.session.update({
       where: { id: sessionId },
       data: { masterAgentId },
-    })
+    });
   }
 
   // Fund session wallet
