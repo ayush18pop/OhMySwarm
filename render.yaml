@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: ohmyswarm-server
+    env: node
+    plan: starter
+    rootDir: .
+    buildCommand: npm install && npm run db:generate && npm run build:server
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
