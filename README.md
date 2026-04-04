@@ -2,25 +2,40 @@
 
 Autonomous DeFi execution with coordinated AI agents, live observability, and policy-gated spending.
 
-OhMySwarm takes a single user intent and turns it into a structured multi-agent workflow:
+OhMySwarm takes a single user intent and turns it into a structured multi-agent workflow: discover portfolio context → scan yield opportunities → analyze risk → plan execution routes → execute deposits (real on Sepolia in paid mode). All with real-time telemetry in the UI and explicit approval checkpoints before critical phases.
 
-- discover portfolio context
-- scan yield opportunities
-- analyze risk
-- plan execution routes
-- execute deposits (real on Sepolia in paid mode)
+---
 
-All with real-time telemetry in the UI and explicit approval checkpoints before critical phases.
+## What judges should verify
 
-## Why This Is Different
+| Agent Role | What It Does | On-Chain Proof |
+|---|---|---|
+| `portfolio-scout` | Queries Zerion API for real mainnet holdings: token balances, DeFi positions, chains, idle capital | [real tx — run in paid mode] |
+| `yield-scanner` | Fetches live DefiLlama `/pools` endpoint, filters by TVL >$50M, sorts by base APY (not reward APY) | No on-chain tx — data query only |
+| `risk-analyst` | Scores each pool 1–10 using TVL stability, IL formula, audit count from DefiLlama `/protocol/{slug}` | No on-chain tx — analysis only |
+| `route-planner` | Plans tx sequence using real-time gas price from chain RPC + CoinGecko ETH price | No on-chain tx — planning only |
+| `executor` | Calls `check_policy` (7-point deterministic engine), then `execute_deposit` (approve + supply on Aave V3) | [real tx — run in paid mode] |
+| `chain-analyst` | DefiLlama `/v2/chains`, `/protocols`, `/stablecoins` — live TVL and stablecoin circulating supply per chain | No on-chain tx — data query only |
+| `token-analyst` | CoinGecko free tier: live price, 24h change, market cap, trending tokens, global DeFi stats | No on-chain tx — data query only |
+| `protocol-researcher` | DefiLlama `/overview/fees` + `/protocol/{slug}`: TVL history, daily/weekly fees, revenue, audit count | No on-chain tx — data query only |
+| `liquidity-scout` | DefiLlama `/pools`: LP depth, volume/TVL ratio, single-sided vs multi-asset pools for a given token | No on-chain tx — data query only |
+
+**Key facts:** 9 autonomous agents · Real Sepolia USDC transfers · Aave V3 deposit execution · x402 micropayment rails (live, not mocked) · LangGraph durable state + Postgres checkpointing · Zerion + DefiLlama partner integrations · Human approval checkpoints before critical execution
+
+---
+
+## Why this is different from other multi-agent demos
 
 Most "AI trading" demos are a single prompt + static answer. OhMySwarm is built as an execution system:
 
 - Stateful orchestration with a durable graph runtime (LangGraph + Postgres checkpointing)
 - Budget-aware agent spawning with deterministic spend accounting
-- x402 micropayment rails between master and sub-agents
-- Session-scoped wallet lifecycle with treasury controls and optional real on-chain settlement
+- x402 micropayment rails between master and sub-agents — each invocation costs real USDC from the session wallet
+- Session-scoped wallet lifecycle with treasury controls and real on-chain settlement in paid mode
 - Real-time event streaming to a split-screen operations console
+- No hardcoded data: Zerion returns live mainnet portfolio, DefiLlama returns live pool APYs, gas prices from chain RPC
+
+---
 
 ## Architecture At A Glance
 
@@ -45,6 +60,22 @@ flowchart LR
   WAL --> CHAIN[(Sepolia USDC + Aave V3)]
 ```
 
+## Agent Roles
+
+| Agent | Role | Billed via x402 | Runs in parallel | Output |
+|---|---|---|---|---|
+| `portfolio-scout` | Fetch user's real mainnet portfolio via Zerion | $0.02 USDC | Yes (Phase 1) | Token holdings, DeFi positions, idle capital |
+| `yield-scanner` | Find top yield pools via DefiLlama, filtered by risk/chain/TVL | $0.05 USDC | Yes (Phase 1) | Ranked pool list: protocol, APY, TVL, stability |
+| `risk-analyst` | Score each pool 1–10: IL risk, TVL trend, audit count, APY volatility | $0.03 USDC | Yes (Phase 1) | Risk report with recommended allocation split |
+| `route-planner` | Sequence transactions, estimate real gas costs from live RPC | $0.03 USDC | No (Phase 2) | Numbered execution plan with gas estimates |
+| `executor` | Policy check + Aave V3 approve/supply on Sepolia | $0.02 USDC | No (Phase 3) | Tx hashes with Etherscan links |
+| `chain-analyst` | TVL by chain, top protocols, stablecoin supply from DefiLlama | $0.02 USDC | Yes (Phase 1) | Chain comparison table |
+| `token-analyst` | Live price, 24h change, market cap, trending from CoinGecko | $0.02 USDC | Yes (Phase 1) | Token market snapshot |
+| `protocol-researcher` | Protocol TVL history, fees, revenue, audits from DefiLlama | $0.03 USDC | Yes (Phase 1) | Protocol due diligence report |
+| `liquidity-scout` | LP depth, volume/TVL ratio, single-sided pools from DefiLlama | $0.02 USDC | Yes (Phase 1) | Liquidity opportunity ranking |
+
+---
+
 ## Core Runtime Design
 
 ### 1. Orchestration Plane
@@ -64,14 +95,6 @@ Runtime characteristics:
 
 Each specialist role is exposed as a backend endpoint and billed via x402 semantics before execution.
 
-Current roles:
-
-- `portfolio-scout`
-- `yield-scanner`
-- `risk-analyst`
-- `route-planner`
-- `executor`
-
 Execution guarantees:
 
 - atomic budget reservation before sub-agent spawn
@@ -83,14 +106,14 @@ Execution guarantees:
 OhMySwarm uses a treasury-to-session wallet model:
 
 - Treasury wallet is the system funding source
-- Every session gets an isolated wallet (ephemeral keypair)
-- Session private keys are encrypted at rest (`SESSION_WALLET_ENCRYPTION_KEY`)
+- Every session gets an isolated wallet (ephemeral keypair generated via viem `generatePrivateKey()`)
+- Session private keys are encrypted at rest using AES-256-GCM (`SESSION_WALLET_ENCRYPTION_KEY`)
 - In paid mode, USDC transfer + gas top-up are real on Sepolia
 
 Billing modes:
 
 - `free`: deterministic mock balances and mock transfers for local/demo speed
-- `paid`: real transfer signing + on-chain confirmations
+- `paid`: real transfer signing + on-chain confirmations via viem `writeContract`
 
 ### 4. Data and State Plane
 
@@ -106,6 +129,20 @@ This enables:
 - robust session replay and debugging
 - deterministic UI reconstruction
 - post-run analytics and judge-friendly transparency
+
+---
+
+## Partner Integrations
+
+| Partner | How OhMySwarm uses it |
+|---|---|
+| **Open Wallet Standard** (`@open-wallet-standard/core`) | Wallet creation and address derivation for the treasury and session wallet abstraction layer. `privateKeyToAccount` + `createWalletClient` from viem signs real USDC transfers on Sepolia. |
+| **x402** (`@x402/core`, `@x402/express`) | Each sub-agent invocation is gated by an x402 micropayment: the session wallet signs a USDC `transfer()` to `PAYMENT_RECEIVER_ADDRESS` before the agent endpoint responds. Payment is recorded on-chain and in Postgres. |
+| **Zerion API** | `portfolio-scout` calls `/v1/wallets/{address}/portfolio` and `/v1/wallets/{address}/positions` to fetch the user's live mainnet token balances and DeFi positions. No hardcoded fallback — real data or error. |
+| **DefiLlama API** | `yield-scanner`, `risk-analyst`, `chain-analyst`, `protocol-researcher`, and `liquidity-scout` all call `yields.llama.fi/pools` and `api.llama.fi` for live TVL, APY, fee, and protocol audit data. No fallback pools. |
+| **Aave V3 on Sepolia** | `executor` calls `approve(aavePool, amount)` on USDC then `supply(usdc, amount, walletAddress, 0)` on the Aave V3 Pool proxy (`0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951`). Both tx hashes are returned and verifiable on Sepolia Etherscan. |
+
+---
 
 ## Frontend System Design
 
@@ -127,13 +164,7 @@ Notable UX patterns:
 - activity stream with payment hashes linked to explorers
 - live connection state and session status badges
 
-## Partner APIs and Protocols In Use
-
-- Open Wallet Standard (`@open-wallet-standard/core`) for wallet abstractions
-- x402 (`@x402/core`, `@x402/express`) for pay-per-call execution rails
-- Zerion API for wallet portfolio context
-- DefiLlama API for yield + protocol intelligence
-- Aave V3 on Sepolia for real deposit execution path in paid mode
+---
 
 ## Repository Structure
 
@@ -141,12 +172,14 @@ Notable UX patterns:
 client/                 Next.js app (canvas + terminal UI)
 server/                 Express + Socket.io + agent runtime
 server/agent/           LangGraph orchestration and prompts
-server/subagents/       Specialist executors
+server/subagents/       Specialist executors (9 roles)
 server/integrations/    Zerion + DefiLlama adapters
 server/tools/           Master tools (spawn, approval)
 prisma/schema.prisma    Session/agent/payment data model
 docs/ARCHITECTURE.md    Deep architecture and sequence diagrams
 ```
+
+---
 
 ## Local Development
 
@@ -171,6 +204,8 @@ App endpoints:
 - frontend: `http://localhost:3000`
 - backend: `http://localhost:3001`
 
+---
+
 ## Environment Profile
 
 Minimum keys for a meaningful local run:
@@ -188,7 +223,9 @@ To enable real payment + execution flow:
 
 Optional partner keys:
 
-- `ZERION_API_KEY` (DefiLlama works without key)
+- `ZERION_API_KEY` (DefiLlama works without a key)
+
+---
 
 ## Deployment Notes (Render + Vercel)
 
@@ -198,21 +235,34 @@ Optional partner keys:
   - `NEXT_PUBLIC_WS_URL`
 - Health endpoint: `/health`
 
+---
+
 ## What Judges Can Verify Quickly
 
 1. Create a session with a budget and watch it move to running state.
-2. Observe parallel sub-agent spawning in the canvas.
+2. Observe parallel sub-agent spawning in the canvas — portfolio-scout, yield-scanner, chain-analyst fire simultaneously.
 3. Inspect activity timeline for spend events and tx links.
 4. Trigger follow-up chat to continue the same session graph.
 5. Review approval gating before critical execution phases.
+6. In paid mode: check Sepolia Etherscan for real USDC transfers from session wallet → `PAYMENT_RECEIVER_ADDRESS`.
+
+---
 
 ## Security and Safety Choices
 
-- Session wallet key encryption at rest
-- Policy checks before execution actions
-- Explicit approval interrupt path
+- Session wallet key encryption at rest (AES-256-GCM)
+- Policy checks before execution actions (7-point deterministic engine: spend cap, slippage, gas, chain allowlist, token allowlist, protocol allowlist, simulation requirement)
+- Explicit approval interrupt path — no autonomous execution without human sign-off
 - Budget reservation before any paid agent invocation
 - Session-level wallet isolation to reduce blast radius
+
+---
+
+## Track Alignment
+
+**Track 04 — Multi-Agent Systems & Autonomous Economies:** OhMySwarm is a production-grade autonomous agent economy where 9 specialist agents are dynamically spawned, billed per-invocation via x402 micropayments from an isolated session wallet, and coordinated by a durable LangGraph orchestrator with human-in-the-loop approval gates — demonstrating wallet-native inter-agent economic coordination on top of real DeFi infrastructure.
+
+---
 
 ## Roadmap
 
