@@ -7,7 +7,7 @@
 
 import { runSubAgent, SubAgentRunInput } from '../agent/executor'
 import { prisma } from '../db'
-import { getPortfolio, getTokenPositions, getDeFiPositions, getPortfolioSummary, isValidWalletAddress } from '../integrations/zerion'
+import { getPortfolio, getDeFiPositions, getPortfolioSummary, isValidWalletAddress } from '../integrations/zerion'
 import type { LLMTool } from '../llm'
 
 const TOOLS: LLMTool[] = [
@@ -55,13 +55,15 @@ async function resolveAddress(raw: unknown, sessionId: string): Promise<string> 
     select: { sessionWalletAddress: true, userWalletAddress: true },
   })
 
-  const candidates = [
-    session?.sessionWalletAddress,
-    session?.userWalletAddress,
-  ].filter(Boolean) as string[]
+  // Prefer user's real mainnet wallet (connected via RainbowKit) over
+  // the session wallet (which is a Sepolia testnet address for payments).
+  // Portfolio data should always reflect the user's real holdings.
+  if (session?.userWalletAddress && isValidWalletAddress(session.userWalletAddress)) {
+    return session.userWalletAddress
+  }
 
-  for (const candidate of candidates) {
-    if (isValidWalletAddress(candidate)) return candidate
+  if (session?.sessionWalletAddress && isValidWalletAddress(session.sessionWalletAddress)) {
+    return session.sessionWalletAddress
   }
 
   return provided

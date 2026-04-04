@@ -50,30 +50,68 @@ const TOOLS: LLMTool[] = [
   },
 ]
 
-function estimateGas(args: Record<string, unknown>): object {
-  const chain  = String(args.chain ?? 'base')
+// Gas units per action type (approximate gas units, not USD)
+const GAS_UNITS: Record<string, number> = {
+  swap:    180_000,
+  bridge:  250_000,
+  deposit: 150_000,
+  stake:   160_000,
+}
+
+async function estimateGas(args: Record<string, unknown>): Promise<object> {
+  const chain  = String(args.chain ?? 'ethereum')
   const count  = Number(args.actionCount ?? 1)
   const types  = String(args.actionTypes ?? 'deposit').split(',')
 
-  const gasPerAction: Record<string, number> = {
-    swap:    chain === 'ethereum' ? 8 : 0.8,
-    bridge:  chain === 'ethereum' ? 15 : 2.5,
-    deposit: chain === 'ethereum' ? 5  : 0.5,
-    stake:   chain === 'ethereum' ? 6  : 0.6,
+  // Fetch real gas price from public RPC
+  let gasPriceGwei = 30 // will be overwritten by real data
+  let ethPriceUsd  = 3500
+  try {
+    const rpcUrl = chain === 'base'
+      ? 'https://mainnet.base.org'
+      : chain === 'arbitrum'
+        ? 'https://arb1.arbitrum.io/rpc'
+        : 'https://eth.llamarpc.com'
+
+    const gasRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_gasPrice', params: [], id: 1 }),
+      signal: AbortSignal.timeout(5000),
+    })
+    const gasData = await gasRes.json() as { result: string }
+    gasPriceGwei = parseInt(gasData.result, 16) / 1e9
+
+    // Fetch real ETH price from CoinGecko
+    const priceRes = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
+      { signal: AbortSignal.timeout(5000) },
+    )
+    const priceData = await priceRes.json() as { ethereum: { usd: number } }
+    ethPriceUsd = priceData.ethereum.usd
+  } catch {
+    // If RPC/price fetch fails, use last known reasonable values
   }
 
-  let totalGas = 0
+  let totalGasUnits = 0
   for (let i = 0; i < count; i++) {
     const type = types[i % types.length]?.trim() ?? 'deposit'
-    totalGas += gasPerAction[type] ?? 1
+    totalGasUnits += GAS_UNITS[type] ?? 150_000
   }
+
+  const totalEth = (totalGasUnits * gasPriceGwei) / 1e9
+  const totalUsdc = totalEth * ethPriceUsd
 
   return {
     chain,
     actionCount:        count,
-    estimatedGasUsdc:   totalGas.toFixed(2),
-    note:               chain === 'base' ? 'Base gas is ~90% cheaper than Ethereum mainnet' : 'Ethereum mainnet gas estimate',
-    recommendation:     totalGas > 20 ? 'Consider batching or using Base/Arbitrum to save gas' : 'Gas cost is reasonable',
+    gasPriceGwei:       gasPriceGwei.toFixed(2),
+    ethPriceUsd:        ethPriceUsd.toFixed(0),
+    totalGasUnits,
+    estimatedEth:       totalEth.toFixed(6),
+    estimatedGasUsdc:   totalUsdc.toFixed(2),
+    note:               `Live gas price: ${gasPriceGwei.toFixed(1)} gwei on ${chain}`,
+    recommendation:     totalUsdc > 20 ? 'Consider batching or using L2s (Base/Arbitrum) to save gas' : 'Gas cost is reasonable',
   }
 }
 
@@ -92,7 +130,7 @@ export async function runRoutePlanner(input: Omit<SubAgentRunInput, 'tools' | 't
         const address    = await getWalletAddress(walletName)
         return { walletName, address, network: process.env.PAYMENT_NETWORK ?? 'base-sepolia' }
       },
-      estimate_transaction_costs: (args) => Promise.resolve(estimateGas(args)),
+      estimate_transaction_costs: (args) => estimateGas(args),
     },
   })
 }

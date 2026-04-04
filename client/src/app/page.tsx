@@ -347,17 +347,7 @@ export default function HomePage() {
               <p className="text-[10px] text-muted uppercase tracking-[0.28em] mb-3">
                 Quick Access
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2.5">
-                <button
-                  onClick={() =>
-                    router.push(
-                      "/session/demo-session-00000000-0000-0000-0000-000000000001",
-                    )
-                  }
-                  className="rounded-lg border border-border px-3 py-2.5 text-xs text-muted hover:text-cyan hover:border-cyan/60 transition-all duration-200"
-                >
-                  View Pre-seeded Demo Session
-                </button>
+              <div className="grid grid-cols-1 gap-2.5">
                 <button
                   onClick={() => router.push("/fund")}
                   className="rounded-lg border border-border px-3 py-2.5 text-xs text-muted hover:text-cyan hover:border-cyan/60 transition-all duration-200"

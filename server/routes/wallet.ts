@@ -14,8 +14,6 @@ import {
   recordTreasuryTopUp,
   verifyFundingTransaction,
 } from "../wallet";
-import crypto from "crypto";
-
 const router = Router();
 
 async function getTreasurySnapshot() {
@@ -79,11 +77,9 @@ router.post("/fund", async (req: Request, res: Response) => {
   const newBalance = await recordTreasuryTopUp(amountUsdc);
   const snapshot = await getTreasurySnapshot();
 
-  const resolvedTxHash =
-    txHash ?? `0x${crypto.randomBytes(32).toString("hex")}`;
   res.json({
     confirmed: true,
-    txHash: resolvedTxHash,
+    txHash: txHash ?? "free-mode-no-tx",
     amountUsdc,
     userWalletAddress: userWalletAddress ?? null,
     newBalance,

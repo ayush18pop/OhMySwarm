@@ -132,20 +132,36 @@ async function checkPolicyTool(args: Record<string, unknown>): Promise<object> {
 async function simulateDeposit(args: Record<string, unknown>): Promise<object> {
   const { protocol, token, amount, chain, walletAddress } = args;
   const info = await getProtocolInfo(String(protocol)).catch(() => null);
-  const txHash = "0x" + crypto.randomBytes(32).toString("hex");
+
+  // Fetch real APY from DefiLlama pools for this protocol+token
+  let realApy = 'unknown';
+  try {
+    const { getTopPools } = await import('../integrations/defillama');
+    const pools = await getTopPools({
+      projects: [String(protocol)],
+      chains: chain ? [String(chain)] : undefined,
+    }, 3);
+    const match = pools.find(p =>
+      p.symbol.toUpperCase().includes(String(token).toUpperCase()),
+    ) ?? pools[0];
+    if (match) {
+      realApy = `${match.apyBase.toFixed(2)}% base APY (live from DefiLlama)`;
+    }
+  } catch {
+    // If DefiLlama is down, report unknown rather than faking it
+  }
 
   return {
     status: "simulated",
-    txHash,
     protocol,
     token,
     depositedAmount: amount,
     chain,
     walletAddress,
-    expectedApy: info
-      ? `~${(Math.random() * 5 + 3).toFixed(1)}% APY`
-      : "unknown",
-    note: "Simulation only — real execution requires protocol ABI integration",
+    expectedApy: realApy,
+    protocolTvl: info ? `$${(info.tvl / 1e6).toFixed(0)}M` : 'unknown',
+    protocolAudits: info?.audits ?? 'unknown',
+    note: "Simulation with real market data — execute_deposit for on-chain execution",
   };
 }
 

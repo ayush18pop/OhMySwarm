@@ -3,6 +3,8 @@
  *
  * DefiLlama yield/protocol data. No API key required.
  * Base: https://yields.llama.fi  and  https://api.llama.fi
+ *
+ * Returns REAL mainnet data only. No fallbacks, no hardcoded pools.
  */
 
 import 'dotenv/config'
@@ -10,7 +12,6 @@ import 'dotenv/config'
 const YIELDS_BASE   = process.env.DEFILLAMA_BASE_URL  ?? 'https://yields.llama.fi'
 const PROTOCOL_BASE = 'https://api.llama.fi'
 const TIMEOUT_MS    = parseInt(process.env.PARTNER_TIMEOUT_MS ?? '8000')
-const FALLBACK_MODE = process.env.PARTNER_FALLBACK_MODE === 'cached'
 
 // ── In-memory TTL cache ───────────────────────────────────────────────────────
 const cache = new Map<string, { value: unknown; expiresAt: number }>()
@@ -63,16 +64,6 @@ export interface ProtocolInfo {
   category:     string
 }
 
-// ── Fallback data (for demo / offline) ──────────────────────────────────────
-
-const FALLBACK_POOLS: YieldPool[] = [
-  { pool: 'aave-v3-usdc-base', chain: 'Base', project: 'aave-v3', symbol: 'USDC', tvlUsd: 890_000_000, apy: 5.2, apyBase: 5.2, apyReward: 0, il7d: 0, volumeUsd1d: 0, stablecoin: true, ilRisk: 'no', exposure: 'single' },
-  { pool: 'pendle-usde-eth',   chain: 'Ethereum', project: 'pendle', symbol: 'USDe', tvlUsd: 430_000_000, apy: 18.4, apyBase: 18.4, apyReward: 0, il7d: 0, volumeUsd1d: 0, stablecoin: true, ilRisk: 'no', exposure: 'single' },
-  { pool: 'curve-3pool',       chain: 'Ethereum', project: 'curve', symbol: 'USDC+USDT+DAI', tvlUsd: 310_000_000, apy: 3.8, apyBase: 3.8, apyReward: 0, il7d: 0.01, volumeUsd1d: 22_000_000, stablecoin: true, ilRisk: 'low', exposure: 'multi' },
-  { pool: 'aave-v3-weth-arb',  chain: 'Arbitrum', project: 'aave-v3', symbol: 'WETH', tvlUsd: 280_000_000, apy: 2.1, apyBase: 2.1, apyReward: 0, il7d: 0, volumeUsd1d: 0, stablecoin: false, ilRisk: 'no', exposure: 'single' },
-  { pool: 'compound-v3-usdc',  chain: 'Base', project: 'compound', symbol: 'USDC', tvlUsd: 145_000_000, apy: 4.9, apyBase: 4.9, apyReward: 0, il7d: 0, volumeUsd1d: 0, stablecoin: true, ilRisk: 'no', exposure: 'single' },
-]
-
 // ── Internal ──────────────────────────────────────────────────────────────────
 
 async function fetchWithTimeout(url: string): Promise<Response> {
@@ -89,25 +80,16 @@ async function fetchWithTimeout(url: string): Promise<Response> {
 
 /** GET /pools — fetch all pools, filter client-side. Cached 5 min. */
 export async function getYieldPools(filters: YieldFilters): Promise<YieldPool[]> {
+  const cached = cacheGet<YieldPool[]>('pools')
   let pools: YieldPool[]
 
-  if (FALLBACK_MODE) {
-    pools = FALLBACK_POOLS
+  if (cached) {
+    pools = cached
   } else {
-    const cached = cacheGet<YieldPool[]>('pools')
-    if (cached) {
-      pools = cached
-    } else {
-      try {
-        const res  = await fetchWithTimeout(`${YIELDS_BASE}/pools`)
-        const data = await res.json() as { data: Array<Record<string, unknown>> }
-        pools = data.data.map(normalizePool)
-        cacheSet('pools', pools, 5 * 60_000)
-      } catch (err) {
-        console.warn('[defillama] API unavailable, using fallback data:', err)
-        pools = FALLBACK_POOLS
-      }
-    }
+    const res  = await fetchWithTimeout(`${YIELDS_BASE}/pools`)
+    const data = await res.json() as { data: Array<Record<string, unknown>> }
+    pools = data.data.map(normalizePool)
+    cacheSet('pools', pools, 5 * 60_000)
   }
 
   return applyFilters(pools, filters)
@@ -118,19 +100,15 @@ export async function getPoolHistory(
   poolId: string,
   days   = 30,
 ): Promise<Array<{ date: string; apy: number; tvlUsd: number }>> {
-  if (FALLBACK_MODE) return generateMockHistory(days)
   const key = `chart:${poolId}`
   const cached = cacheGet<Array<{ date: string; apy: number; tvlUsd: number }>>(key)
   if (cached) return cached.slice(-days)
-  try {
-    const res  = await fetchWithTimeout(`${YIELDS_BASE}/chart/${poolId}`)
-    const data = await res.json() as { data: Array<{ timestamp: string; apy: number; tvlUsd: number }> }
-    const result = data.data.map(d => ({ date: d.timestamp, apy: d.apy, tvlUsd: d.tvlUsd }))
-    cacheSet(key, result, 10 * 60_000)
-    return result.slice(-days)
-  } catch {
-    return generateMockHistory(days)
-  }
+
+  const res  = await fetchWithTimeout(`${YIELDS_BASE}/chart/${poolId}`)
+  const data = await res.json() as { data: Array<{ timestamp: string; apy: number; tvlUsd: number }> }
+  const result = data.data.map(d => ({ date: d.timestamp, apy: d.apy, tvlUsd: d.tvlUsd }))
+  cacheSet(key, result, 10 * 60_000)
+  return result.slice(-days)
 }
 
 /** GET /protocol/{protocol} — protocol TVL stats. Cached 10 min. */
@@ -138,25 +116,22 @@ export async function getProtocolInfo(protocol: string): Promise<ProtocolInfo> {
   const key = `proto:${protocol}`
   const cached = cacheGet<ProtocolInfo>(key)
   if (cached) return cached
-  try {
-    const res  = await fetchWithTimeout(`${PROTOCOL_BASE}/protocol/${protocol}`)
-    const data = await res.json() as {
-      name: string; tvl: number; change_7d: number; change_1m: number
-      audits: number; category: string
-    }
-    const result: ProtocolInfo = {
-      name:         data.name ?? protocol,
-      tvl:          data.tvl ?? 0,
-      tvl7dChange:  data.change_7d ?? 0,
-      tvl30dChange: data.change_1m ?? 0,
-      audits:       data.audits ?? 0,
-      category:     data.category ?? 'Unknown',
-    }
-    cacheSet(key, result, 10 * 60_000)
-    return result
-  } catch {
-    return { name: protocol, tvl: 0, tvl7dChange: 0, tvl30dChange: 0, audits: 0, category: 'Unknown' }
+
+  const res  = await fetchWithTimeout(`${PROTOCOL_BASE}/protocol/${protocol}`)
+  const data = await res.json() as {
+    name: string; tvl: number; change_7d: number; change_1m: number
+    audits: number; category: string
   }
+  const result: ProtocolInfo = {
+    name:         data.name ?? protocol,
+    tvl:          data.tvl ?? 0,
+    tvl7dChange:  data.change_7d ?? 0,
+    tvl30dChange: data.change_1m ?? 0,
+    audits:       data.audits ?? 0,
+    category:     data.category ?? 'Unknown',
+  }
+  cacheSet(key, result, 10 * 60_000)
+  return result
 }
 
 /** Top N pools by base APY (excludes inflationary rewards). */
@@ -201,14 +176,4 @@ function normalizePool(raw: Record<string, unknown>): YieldPool {
     ilRisk:      (raw.ilRisk as 'no' | 'low' | 'high') ?? 'no',
     exposure:    (raw.exposure as 'single' | 'multi')  ?? 'single',
   }
-}
-
-function generateMockHistory(days: number): Array<{ date: string; apy: number; tvlUsd: number }> {
-  const result = []
-  const now = Date.now()
-  for (let i = days; i >= 0; i--) {
-    const date = new Date(now - i * 86_400_000).toISOString().split('T')[0]
-    result.push({ date, apy: 4.5 + Math.random() * 2, tvlUsd: 500_000_000 + Math.random() * 50_000_000 })
-  }
-  return result
 }
