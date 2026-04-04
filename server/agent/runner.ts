@@ -93,11 +93,27 @@ export async function startSession(opts: StartSessionOptions): Promise<void> {
   const checkpointer = await getCheckpointer();
   const graph = buildMasterGraph(checkpointer);
 
+  // Reload session to get the user's real mainnet wallet address (from RainbowKit)
+  const updatedSession = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { userWalletAddress: true },
+  });
+
+  const userWallet = updatedSession?.userWalletAddress ?? null;
+
   const initialMessages: LLMMessage[] = [
     { role: "system", content: MASTER_SYSTEM_PROMPT },
     {
       role: "user",
-      content: `Task: ${task}\nSession budget: $${budgetUsdc} USDC\nSession ID: ${sessionId}\nSession wallet address: ${sessionWalletAddress ?? "unknown"}`,
+      content: [
+        `Task: ${task}`,
+        `Session budget: $${budgetUsdc} USDC`,
+        `Session ID: ${sessionId}`,
+        userWallet
+          ? `User mainnet wallet (use this for portfolio analysis): ${userWallet}`
+          : `No user wallet connected — portfolio-scout should ask the user for a wallet address`,
+        `Session wallet (for payments only): ${sessionWalletAddress ?? "unknown"}`,
+      ].join("\n"),
     },
   ];
 
